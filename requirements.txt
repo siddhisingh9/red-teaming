@@ -1,0 +1,28 @@
+# core
+pydantic>=2.7
+python-dotenv>=1.0
+
+# attacker / agent model backends
+groq>=0.11
+
+# retrieval (day 10-11)
+faiss-cpu>=1.8
+numpy>=1.26
+
+# MCP tools (day 6)
+fastmcp>=0.2
+
+# defender fine-tuning (day 15-17)
+torch>=2.3
+transformers>=4.44
+peft>=0.12
+trl>=0.9
+accelerate>=0.33
+datasets>=2.20
+
+# analysis / figures
+pandas>=2.2
+matplotlib>=3.9
+
+# testing
+pytest>=8.0
