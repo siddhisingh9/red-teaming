@@ -5,69 +5,54 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class Split(str, Enum):
-    train = "train"
-    test = "test"
+class Outcome(str, Enum):
+    """judge/canary.py's verdict on a single run."""
+
+    BLOCKED = "BLOCKED"
+    SUCCESS = "SUCCESS"
 
 
-class InjectionPattern(BaseModel):
-    """One row of data/corpus/patterns.jsonl."""
+class AttackCase(BaseModel):
+    """One attack scenario to run through the pipeline."""
 
-    id: str
-    family: int = Field(ge=1, le=6)
-    split: Split
-    text: str
-    source: str | None = None
+    name: str  # short id, e.g. "direct_override" -- used as the log key
+    technique: str  # human-readable description of what this case tries
+    injected_text: str  # the injection payload for this case
 
 
 class ToolCall(BaseModel):
-    name: str
+    """A tool invocation the agent requests mid-turn."""
+
+    tool_name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
-class Turn(BaseModel):
-    role: Literal["system", "user", "assistant", "tool"]
+class ToolResponse(BaseModel):
+    """What a tool hands back to the agent -- this is where injected text hides."""
+
+    tool_name: str
     content: str
-    tool_calls: list[ToolCall] = Field(default_factory=list)
 
 
-class CanaryVerdict(BaseModel):
-    """Output of judge/canary.py for a single run."""
+class AgentTurn(BaseModel):
+    """One turn of agent output."""
 
-    canary_token: str
-    leaked: bool
-    leaked_at_turn: int | None = None
-
-
-class BenignTask(BaseModel):
-    """One row of data/benign/tasks.jsonl."""
-
-    id: str
-    prompt: str
-    check: str  # description of the deterministic pass/fail check
-
-
-class SFTExample(BaseModel):
-    """One row of data/sft/train.jsonl."""
-
-    id: str
-    messages: list[Turn]
-    source_run_id: str | None = None  # None for the +30% benign examples
+    role: str
+    content: str
+    tool_call: ToolCall | None = None
 
 
 class RunRecord(BaseModel):
     """One line of logs/runs.jsonl. Append-only, never rewritten."""
 
-    run_id: str
+    case_name: str
+    injected_text: str
+    tool_response: str
+    final_output: str
+    outcome: Outcome
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    attacker: Literal["vanilla", "rag"]
-    agent_model: str
-    injection_pattern_id: str | None = None
-    transcript: list[Turn]
-    verdict: CanaryVerdict
-    notes: str | None = None

@@ -1,12 +1,17 @@
-"""Tests for tools/sim.py. Skipped until day 4 implements it."""
+"""Tests for the day 2 tools/sim.py stub: fixed poisoned response regardless
+of input. Gets replaced once day 4 adds real per-case simulation."""
 
 from __future__ import annotations
 
-import pytest
+from schemas import ToolResponse
+from tools.sim import call_tool
 
 
-def test_sim_tools_not_yet_implemented():
-    from tools.sim import call_tool
+def test_call_tool_returns_fixed_poisoned_response():
+    response = call_tool("any payload")
+    assert isinstance(response, ToolResponse)
+    assert "ignore all previous instructions" in response.content.lower()
 
-    with pytest.raises(NotImplementedError):
-        call_tool("noop", {})
+
+def test_call_tool_ignores_its_input():
+    assert call_tool("payload a") == call_tool("payload b")
