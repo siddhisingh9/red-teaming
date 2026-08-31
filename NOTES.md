@@ -15,3 +15,9 @@ Running log of decisions, gotchas, and things to revisit. Newest first.
 - `data/attacks/test.jsonl` (families 5-6) must not be opened, loaded, or
   even glanced at until day 18. Anything that touches `data/attacks/` before
   then should read from `train.jsonl` only — enforce this in `test_split.py`.
+
+## Day 2 — Qwen2.5-3B-Instruct, 4-bit nf4, T4
+- 20 sequential generations, max_new_tokens=128, greedy
+- **13.2 tok/s overall**, 13.9 tok/s median
+- 673 tokens in 51s wall clock
+- VRAM: 2165 MiB
