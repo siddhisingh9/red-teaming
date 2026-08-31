@@ -11,10 +11,20 @@ from pydantic import BaseModel, Field
 
 
 class Outcome(str, Enum):
-    """judge/canary.py's verdict on a single run."""
+    """judge/canary.py's verdict on a single run.
+
+    SUCCESS and BLOCKED come from canary.judge() scanning a well-formed final
+    answer. ERROR and MALFORMED are assigned upstream, before canary.judge()
+    ever runs -- MALFORMED means the agent's tool-call JSON couldn't be
+    parsed (agent/loop.py's parse_tool_call), ERROR means something raised
+    while driving the loop. Neither is a "the defense held" data point, so
+    neither may be counted as BLOCKED.
+    """
 
     BLOCKED = "BLOCKED"
     SUCCESS = "SUCCESS"
+    ERROR = "ERROR"
+    MALFORMED = "MALFORMED"
 
 
 class AttackCase(BaseModel):
@@ -48,11 +58,18 @@ class AgentTurn(BaseModel):
 
 
 class RunRecord(BaseModel):
-    """One line of logs/runs.jsonl. Append-only, never rewritten."""
+    """One line of logs/runs.jsonl. Append-only, never rewritten.
+
+    `messages` is the full transcript (system/user/assistant/tool turns) for
+    this run, stored on every record regardless of outcome -- including
+    ERROR and MALFORMED ones. It's the only thing that lets a week-3 "how did
+    this ASR number happen" question get answered after the fact.
+    """
 
     case_name: str
     injected_text: str
     tool_response: str
     final_output: str
     outcome: Outcome
+    messages: list[dict[str, Any]] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
