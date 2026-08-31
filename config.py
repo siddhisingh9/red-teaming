@@ -24,6 +24,7 @@ SFT_TRAIN_PATH = DATA_DIR / "sft" / "train.jsonl"
 LOGS_DIR = ROOT / "logs"
 RUNS_LOG_PATH = LOGS_DIR / "runs.jsonl"
 CONTROL_LOG_PATH = LOGS_DIR / "control_runs.jsonl"
+MCP_LOG_PATH = LOGS_DIR / "mcp_runs.jsonl"
 
 FIGURES_DIR = ROOT / "figures"
 RESULTS_DIR = ROOT / "results"
@@ -42,6 +43,13 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 AGENT_MODEL = os.environ.get("RT_AGENT_MODEL", "llama-3.1-8b-instant")
 ATTACKER_MODEL = os.environ.get("RT_ATTACKER_MODEL", "llama-3.3-70b-versatile")
+
+# Tool transport: "direct" calls tools/sim.py in-process (fast, for
+# day-to-day debugging); "mcp" round-trips through tools/mcp_client.py's
+# real MCP stdio session (tools/mcp_server.py) -- the actual untrusted
+# channel this project studies. Override with runner.py's --transport, or
+# this env var. Keep "direct" the default forever; it's ~10x faster.
+TRANSPORT = os.environ.get("RT_TRANSPORT", "direct")
 
 DEFAULT_TEMPERATURE = 0.7
 MAX_TURNS = 6

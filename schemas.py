@@ -78,6 +78,7 @@ class RunRecord(BaseModel):
     case_name: str
     family: str
     tool_name: str
+    transport: str  # "direct" or "mcp" -- see config.TRANSPORT
     injected_text: str
     tool_response: str
     final_output: str

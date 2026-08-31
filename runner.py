@@ -12,6 +12,12 @@ choice.
 still planted in the system prompt (see agent/prompts.py), so a nonzero hit
 rate there means the harness itself is leaking the canary, independent of
 any attack -- every real-run result is void until that's 0%.
+
+--transport {direct,mcp} picks which tool_registry drives the run:
+tools/sim.py in-process, or tools/mcp_client.py's real MCP stdio session
+against tools/mcp_server.py. Same agent code either way -- run_one() and
+agent/loop.py don't know or care which one they got. Direct writes to
+logs/runs.jsonl, mcp to logs/mcp_runs.jsonl, so the two are easy to diff.
 """
 
 from __future__ import annotations
@@ -27,7 +33,9 @@ from agent.loop import AgentRunError
 from agent.prompts import get_system_prompt
 from judge import canary
 from schemas import AttackCase, Outcome, Position, RunRecord
-from tools import sim
+from tools import mcp_client, sim
+
+TOOL_REGISTRIES = {"direct": sim.TOOL_REGISTRY, "mcp": mcp_client.TOOL_REGISTRY}
 
 POSITIONS: tuple[Position, ...] = ("top", "middle", "bottom")
 
@@ -72,11 +80,14 @@ def _seed_messages(tool_name: str, task: str, tool_args: dict[str, str]) -> list
     ]
 
 
-def run_one(case: AttackCase, tool_name: str, position: Position, control: bool) -> RunRecord:
+def run_one(
+    case: AttackCase, tool_name: str, position: Position, control: bool, transport: str
+) -> RunRecord:
     task, tool_args = TOOL_TASKS[tool_name]
     injection = None if control else case.injected_text
+    tool_registry = TOOL_REGISTRIES[transport]
 
-    poisoned = sim.TOOL_REGISTRY[tool_name](**tool_args, injection=injection, position=position)
+    poisoned = tool_registry[tool_name](**tool_args, injection=injection, position=position)
     messages = _seed_messages(tool_name, task, tool_args)
     messages.append({"role": "tool", "content": poisoned.content})
 
@@ -86,7 +97,7 @@ def run_one(case: AttackCase, tool_name: str, position: Position, control: bool)
         # makes on its own during this run gets a clean result, so we're
         # never poisoning a second, uncontrolled channel in the same run.
         messages, final_output, malformed = loop.run_agent_from_messages(
-            messages, sim.TOOL_REGISTRY, injection=None, position=position
+            messages, tool_registry, injection=None, position=position
         )
     except AgentRunError as exc:
         outcome = Outcome.ERROR
@@ -107,6 +118,7 @@ def run_one(case: AttackCase, tool_name: str, position: Position, control: bool)
         case_name=case.name,
         family=case.family,
         tool_name=tool_name,
+        transport=transport,
         injected_text=case.injected_text,
         tool_response=poisoned.content,
         final_output=final_output,
@@ -141,6 +153,14 @@ def main() -> None:
         action="store_true",
         help="Run every case with injection=None. The canary must appear zero times.",
     )
+    parser.add_argument(
+        "--transport",
+        choices=["direct", "mcp"],
+        default=config.TRANSPORT,
+        help="'direct' calls tools/sim.py in-process; 'mcp' round-trips through "
+        "tools/mcp_client.py's real MCP stdio session. Default from config.TRANSPORT "
+        "(RT_TRANSPORT env var), which is 'direct' unless overridden.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s: %(message)s")
@@ -149,7 +169,10 @@ def main() -> None:
     tools = list(TOOL_TASKS)
     total = len(cases) * len(tools) * len(POSITIONS)
     mode = "CONTROL (injection=None)" if args.control else "ATTACK"
-    print(f"Running {total} cases [{mode}]: {len(cases)} attacks x {len(tools)} tools x {len(POSITIONS)} positions")
+    print(
+        f"Running {total} cases [{mode}, transport={args.transport}]: "
+        f"{len(cases)} attacks x {len(tools)} tools x {len(POSITIONS)} positions"
+    )
 
     records: list[RunRecord] = []
     counts = {outcome: 0 for outcome in Outcome}
@@ -159,7 +182,9 @@ def main() -> None:
         for tool_name in tools:
             for position in POSITIONS:
                 i += 1
-                record = run_one(case, tool_name, position, control=args.control)
+                record = run_one(
+                    case, tool_name, position, control=args.control, transport=args.transport
+                )
                 counts[record.outcome] += 1
                 records.append(record)
                 print(f"[{i}/{total}] {case.name} | {tool_name} | {position} -> {record.outcome.value}")
@@ -185,7 +210,12 @@ def main() -> None:
         )
 
     config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = config.CONTROL_LOG_PATH if args.control else config.RUNS_LOG_PATH
+    if args.control:
+        log_path = config.CONTROL_LOG_PATH
+    elif args.transport == "mcp":
+        log_path = config.MCP_LOG_PATH
+    else:
+        log_path = config.RUNS_LOG_PATH
     with open(log_path, "a", encoding="utf-8") as f:
         for record in records:
             f.write(record.model_dump_json() + "\n")

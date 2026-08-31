@@ -2,6 +2,71 @@
 
 Running log of decisions, gotchas, and things to revisit. Newest first.
 
+## Day 6 — MCP stdio transport, agent unchanged behind the registry
+- **requirements.txt's `mcp==2.1.1` is the v2.x SDK, not v1.x.** The
+  reference snippet's `from mcp.server.fastmcp import FastMCP` raises
+  `ModuleNotFoundError` on this version -- v2 renamed `FastMCP` to
+  `MCPServer` (`mcp.server.mcpserver.MCPServer`). The decorator/run API is
+  otherwise identical (`@mcp.tool()`, `mcp.run(transport="stdio")`),
+  confirmed against the actually-installed version rather than assuming
+  the reference snippet's import still works, the same lesson as day 4's
+  tool-set correction.
+- `tools/mcp_server.py`: three `@mcp.tool()`-decorated functions
+  (`web_search`, `read_file`, `fetch_url`) thinly wrapping `tools/sim.py`'s
+  real implementations, run over stdio. `tools/mcp_client.py`: opens a
+  fresh stdio session + `ClientSession` per call (spawns
+  `tools/mcp_server.py` as a subprocess each time), and exposes a
+  `TOOL_REGISTRY` dict with the exact same shape as `tools/sim.py`'s --
+  `agent/loop.py` needed zero changes to run against it.
+- Verified content parity directly (not just "it runs"): the same
+  `(query, injection, position)` through `tools.mcp_client.TOOL_REGISTRY`
+  and through `tools.sim` produces byte-identical `.content`, and identical
+  `was_poisoned`/`injection_id`/`position` metadata once I fixed the client
+  to compute those instead of leaving them at their dataclass defaults.
+- **Real bug, not a flaky test:** raising inside nested `async with
+  stdio_client(...) / async with ClientSession(...)` blocks gets wrapped in
+  an `anyio` `ExceptionGroup` on the way out of the context managers -- even
+  on Python 3.10, without native `except*`. A clean `RuntimeError("MCP tool
+  X errored: ...")` was arriving at callers (including
+  `agent/loop.py`'s `AgentRunError`) as an opaque "unhandled errors in a
+  TaskGroup". Fixed by moving the `raise` to *after* both `async with`
+  blocks have exited cleanly, once `result` is a plain value with no
+  in-flight task group to wrap it.
+- Chose per-call session (spawn server subprocess, call, tear down) over a
+  persistent session on a background event-loop thread. Slower (~1.3s/run
+  average with a mocked generate() in a 108-run smoke test, vs. instant for
+  direct), but avoids an entire category of cross-thread asyncio bugs for
+  a "5-7h" scoped day. That overhead is exactly what config.TRANSPORT
+  defaulting to "direct" exists to make optional.
+- **This machine has no per-project virtualenv -- everything installs into
+  one shared global site-packages.** That surfaced a real landmine: a
+  stray `site-packages/schemas/` directory (no `__init__.py`, leftover from
+  an unrelated chromadb-adjacent install) is an implicit PEP 420 namespace
+  package that shadows this project's own top-level `schemas.py` whenever
+  the project root isn't on `sys.path` ahead of site-packages. `mcp dev`'s
+  `_import_server` only adds the server file's own directory to
+  `sys.path`, not the project root, so `tools/mcp_server.py`'s `from
+  schemas import Position` silently resolved to the wrong `schemas` and
+  failed with a confusing `ImportError: cannot import name 'Position' from
+  'schemas' (unknown location)`. Fixed for `mcp dev` specifically by
+  setting `PYTHONPATH` to the project root before invoking it; the deeper
+  fix (a real per-project venv) is out of scope for today but worth doing
+  before this bites some other tool.
+- `mcp dev tools/mcp_server.py` (green checkpoint) also needs `uv`
+  installed (the Inspector shells out to it) -- not present on this
+  machine. Couldn't drive the actual browser Inspector UI from this
+  sandbox anyway (it's interactive), so verified the equivalent
+  functionality directly: a real client session lists exactly
+  `{web_search, read_file, fetch_url}` and can call each one successfully
+  over the real stdio protocol (tests/test_mcp.py).
+- Added `--transport {direct,mcp}` to runner.py and a `transport` field on
+  RunRecord. MCP runs write to a new `logs/mcp_runs.jsonl` (separate from
+  direct's `logs/runs.jsonl`) so the day-5-suite-over-MCP comparison
+  doesn't require picking apart a mixed file.
+- Did not run the real 108-case MCP comparison against Qwen (needs the
+  Colab T4). Verified the harness itself end-to-end with a mocked
+  generate(): 108/108 MCP runs complete, 0 errors, 0 malformed.
+
 ## Day 5 — canary judge finalized, 12 hand-written attacks, first real ASR
 - **Found and fixed a real bug before it could invalidate every prior run**:
   the canary (`XJ9-CANARY-4417`) was never actually planted anywhere in the
