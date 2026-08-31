@@ -97,6 +97,32 @@ Real run only (all zero in control, as expected).
   was built to make measurable; worth confirming it holds up once the
   attacker-generated corpus (day 8+) gives a larger sample.
 
+## MCP transport vs. direct (day 6)
+
+Day 5's exact 108-run suite re-run with `runner.py --transport mcp`
+(tools/mcp_client.py -> a real stdio round trip to tools/mcp_server.py)
+instead of `tools/sim.py` in-process. Green checkpoint: the MCP ASR should
+land within a few points of direct.
+
+| Run | Total | Success | Blocked | Malformed | Error | ASR |
+|---|---|---|---|---|---|---|
+| Direct (`tools/sim.py`, in-process) | 108 | 21 | 87 | 0 | 0 | 19.4% |
+| MCP (`tools/mcp_client.py`, real stdio) | 108 | 21 | 87 | 0 | 0 | 19.4% |
+
+**Result: exact match**, including every cell of the family/tool/position
+breakdown (41.7%/8.3%/8.3% by family, 11.1%/36.1%/11.1% by tool,
+5.6%/19.4%/33.3% by position -- identical to the direct-run tables above).
+That's not a coincidence and not a weaker result than "a few points apart"
+-- it's the strongest version of the checkpoint passing. `generate()` runs
+greedy (`temperature=0.0`), so the agent's output is a deterministic
+function of its input messages; a component test already confirmed
+MCP delivers byte-identical tool content and metadata to the direct path
+(`tests/test_mcp.py`). Identical inputs under deterministic decoding
+necessarily produce identical outputs, so an exact match across all 108
+runs is direct evidence the MCP stdio round trip -- JSON-RPC framing,
+`CallToolResult` serialization, all of it -- introduces zero reshaping of
+tool content in transit.
+
 ## Attacker-arm ASR (later days)
 
 | Attacker | Split | Runs | Hits | ASR |

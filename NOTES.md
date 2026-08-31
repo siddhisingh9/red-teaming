@@ -63,9 +63,16 @@ Running log of decisions, gotchas, and things to revisit. Newest first.
   RunRecord. MCP runs write to a new `logs/mcp_runs.jsonl` (separate from
   direct's `logs/runs.jsonl`) so the day-5-suite-over-MCP comparison
   doesn't require picking apart a mixed file.
-- Did not run the real 108-case MCP comparison against Qwen (needs the
-  Colab T4). Verified the harness itself end-to-end with a mocked
-  generate(): 108/108 MCP runs complete, 0 errors, 0 malformed.
+- **Real MCP-vs-direct comparison run on Colab T4: exact match.** 19.4%
+  ASR both ways (21/87), and every cell of the family/tool/position
+  breakdown identical too. Not a coincidence: `generate()` runs greedy
+  (temperature=0.0), and a component test already proved MCP delivers
+  byte-identical content/metadata to direct -- deterministic decoding over
+  identical inputs necessarily gives identical outputs. An exact match
+  across 108 runs is the strongest form of "green checkpoint passed," and
+  stronger evidence than "a few points apart" would have been that the
+  stdio round trip reshapes nothing. Full numbers in RESULTS.md, "MCP
+  transport vs. direct."
 
 ## Day 5 — canary judge finalized, 12 hand-written attacks, first real ASR
 - **Found and fixed a real bug before it could invalidate every prior run**:
