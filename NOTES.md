@@ -45,11 +45,24 @@ Running log of decisions, gotchas, and things to revisit. Newest first.
   success count must be exactly 0 or every real-run result is void.
 - Did not run the real 108-run sweep in this sandbox (still CPU-only, no
   CUDA for bitsandbytes 4-bit). Verified the full pipeline end-to-end here
-  with a mocked `generate()` -- 108/108 runs complete, breakdown tables by
-  family/tool/position all print correctly, control-mode leak check
-  correctly reads 0/108 for a benign canned model and 108/108 for a
-  deliberately leaky one. Real run + control run happen on the Colab T4;
-  RESULTS.md has empty tables waiting for those numbers.
+  with a mocked `generate()` first -- 108/108 runs complete, breakdown
+  tables by family/tool/position all print correctly, control-mode leak
+  check correctly reads 0/108 for a benign canned model and 108/108 for a
+  deliberately leaky one.
+- **Real run + control run completed on Colab T4.** Green checkpoint met:
+  19.4% overall ASR (21/108, inside the expected 15-70% band) and exactly
+  0/108 on control (harness isn't leaking the canary on its own). Full
+  numbers and breakdown tables in RESULTS.md. Headline findings there:
+  `direct_override` (41.7%) outperformed `fake_system_message` and
+  `tool_call_emission` (8.3% each) by ~5x; `read_file` leaked 3x more than
+  `web_search`/`fetch_url`; position showed a clean bottom > middle > top
+  trend (33.3% > 19.4% > 5.6%), a ~6x spread -- the day 4 position knob
+  paid off immediately.
+- The raw `logs/runs.jsonl` / `logs/control_runs.jsonl` from this run exist
+  only on the Colab instance so far, not committed here -- Colab sessions
+  are ephemeral, so pull those back into the repo before the session
+  recycles if the full per-run transcripts (not just the RESULTS.md
+  summary) need to survive.
 
 ## Day 4 — real tool simulator + the position knob
 - Corrected the tool set from day 3's guess. The actual three tools are
