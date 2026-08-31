@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 from agent.model import generate
 from agent.prompts import get_system_prompt
-from schemas import Outcome, ToolCall, ToolResponse
+from schemas import Outcome, Position, ToolCall, ToolResponse
 
 logger = logging.getLogger(__name__)
 
@@ -144,9 +144,15 @@ def run_agent(
     user_task: str,
     tool_registry: dict[str, Callable[..., ToolResponse]],
     injection: str | None = None,
+    position: Position = "middle",
     max_iters: int = MAX_ITERS,
 ) -> tuple[list[dict[str, Any]], str, bool]:
     """Drive generate -> parse -> execute -> generate, capped at max_iters.
+
+    `position` is forwarded to every tool call unchanged -- it's the knob
+    for where in a tool's content the injection gets spliced (see
+    tools/sim.py._splice), threaded all the way from the caller so it can
+    be swept per run without touching this loop.
 
     Returns (messages, final_output, malformed). `malformed` is True iff the
     loop stopped early because a tool call couldn't be parsed or named an
@@ -178,7 +184,7 @@ def run_agent(
             return messages, out, True
 
         try:
-            result = tool_fn(**call.arguments, injection=injection)
+            result = tool_fn(**call.arguments, injection=injection, position=position)
         except Exception as exc:
             raise AgentRunError(messages, exc) from exc
         messages.append({"role": "tool", "content": result.content})

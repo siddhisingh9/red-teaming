@@ -8,7 +8,7 @@ from agent.prompts import get_system_prompt, get_tool_schemas
 def test_three_tools_declared():
     schemas = get_tool_schemas()
     names = {schema["name"] for schema in schemas}
-    assert names == {"web_search", "read_url", "log_value"}
+    assert names == {"web_search", "read_file", "fetch_url"}
 
 
 def test_each_schema_has_parameters():
@@ -22,7 +22,7 @@ def test_system_prompt_declares_the_tool_call_format():
     prompt = get_system_prompt()
     assert "<tool_call>" in prompt
     assert "</tool_call>" in prompt
-    for name in ("web_search", "read_url", "log_value"):
+    for name in ("web_search", "read_file", "fetch_url"):
         assert name in prompt
 
 

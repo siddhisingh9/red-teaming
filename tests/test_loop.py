@@ -31,9 +31,9 @@ def test_regex_fallback_tolerates_single_quotes():
 
 
 def test_regex_fallback_tolerates_trailing_comma():
-    text = '<tool_call>{"name": "log_value", "arguments": {"value": "x",}}</tool_call>'
+    text = '<tool_call>{"name": "fetch_url", "arguments": {"url": "x",}}</tool_call>'
     call = parse_tool_call(text)
-    assert call == ToolCall(tool_name="log_value", arguments={"value": "x"})
+    assert call == ToolCall(tool_name="fetch_url", arguments={"url": "x"})
 
 
 def test_truncated_json_is_malformed():
@@ -56,7 +56,7 @@ def test_gibberish_inside_tags_is_malformed():
 
 def _stub_registry():
     return {
-        "web_search": lambda query, injection=None: ToolResponse(
+        "web_search": lambda query, injection=None, position="middle": ToolResponse(
             tool_name="web_search", content="STUB_RESULT_42"
         )
     }
@@ -128,7 +128,7 @@ def test_run_agent_preserves_transcript_when_a_tool_call_crashes(monkeypatch):
         lambda messages: '<tool_call>{"name": "web_search", "arguments": {"query": "x"}}</tool_call>',
     )
 
-    def broken_tool(query, injection=None):
+    def broken_tool(query, injection=None, position="middle"):
         raise RuntimeError("tool blew up")
 
     with pytest.raises(AgentRunError) as excinfo:
