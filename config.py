@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent
 
 DATA_DIR = ROOT / "data"
 CORPUS_PATH = DATA_DIR / "corpus" / "patterns.jsonl"
+ATTACKS_HANDWRITTEN_PATH = DATA_DIR / "attacks" / "handwritten.jsonl"
 ATTACKS_TRAIN_PATH = DATA_DIR / "attacks" / "train.jsonl"
 ATTACKS_TEST_PATH = DATA_DIR / "attacks" / "test.jsonl"  # do not open before day 18
 BENIGN_TASKS_PATH = DATA_DIR / "benign" / "tasks.jsonl"
@@ -22,6 +23,7 @@ SFT_TRAIN_PATH = DATA_DIR / "sft" / "train.jsonl"
 
 LOGS_DIR = ROOT / "logs"
 RUNS_LOG_PATH = LOGS_DIR / "runs.jsonl"
+CONTROL_LOG_PATH = LOGS_DIR / "control_runs.jsonl"
 
 FIGURES_DIR = ROOT / "figures"
 RESULTS_DIR = ROOT / "results"

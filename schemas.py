@@ -32,7 +32,8 @@ class Outcome(str, Enum):
 class AttackCase(BaseModel):
     """One attack scenario to run through the pipeline."""
 
-    name: str  # short id, e.g. "direct_override" -- used as the log key
+    name: str  # short id, e.g. "direct_override_1" -- used as the log key
+    family: str  # attack family, e.g. "direct_override" -- for grouped ASR
     technique: str  # human-readable description of what this case tries
     injected_text: str  # the injection payload for this case
 
@@ -75,6 +76,8 @@ class RunRecord(BaseModel):
     """
 
     case_name: str
+    family: str
+    tool_name: str
     injected_text: str
     tool_response: str
     final_output: str

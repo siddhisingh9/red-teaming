@@ -140,30 +140,36 @@ def parse_tool_call(text: str) -> ToolCall | None | Outcome:
     return Outcome.MALFORMED
 
 
-def run_agent(
-    user_task: str,
+def run_agent_from_messages(
+    messages: list[dict[str, Any]],
     tool_registry: dict[str, Callable[..., ToolResponse]],
     injection: str | None = None,
     position: Position = "middle",
     max_iters: int = MAX_ITERS,
 ) -> tuple[list[dict[str, Any]], str, bool]:
-    """Drive generate -> parse -> execute -> generate, capped at max_iters.
+    """Core loop: generate -> parse -> execute -> generate, capped at
+    max_iters real generations, continuing from an existing message history
+    (`messages` is mutated in place and also returned).
 
-    `position` is forwarded to every tool call unchanged -- it's the knob
-    for where in a tool's content the injection gets spliced (see
-    tools/sim.py._splice), threaded all the way from the caller so it can
-    be swept per run without touching this loop.
+    This is the piece that lets a caller seed a conversation up to and
+    including an already-poisoned tool response -- e.g. to pin down exactly
+    which tool and splice position delivered the injection, rather than
+    leaving that to whichever tool the model happens to call (see
+    runner.py's controlled tool x position sweep). `run_agent` below is the
+    convenience wrapper for the common case of starting fresh.
+
+    `position` is forwarded to every tool call this loop itself executes --
+    it's the knob for where in a tool's content the injection gets spliced
+    (see tools/sim.py._splice). `injection` likewise: pass None here when
+    the injection has already been delivered via a seeded tool response, so
+    any further tool calls the agent makes on its own get a clean result
+    instead of getting poisoned a second time.
 
     Returns (messages, final_output, malformed). `malformed` is True iff the
     loop stopped early because a tool call couldn't be parsed or named an
     unknown tool -- callers must map that straight to Outcome.MALFORMED
     rather than running it through canary.judge().
     """
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": get_system_prompt()},
-        {"role": "user", "content": user_task},
-    ]
-
     out = ""
     for _ in range(max_iters):
         try:
@@ -190,3 +196,21 @@ def run_agent(
         messages.append({"role": "tool", "content": result.content})
 
     return messages, out, False
+
+
+def run_agent(
+    user_task: str,
+    tool_registry: dict[str, Callable[..., ToolResponse]],
+    injection: str | None = None,
+    position: Position = "middle",
+    max_iters: int = MAX_ITERS,
+) -> tuple[list[dict[str, Any]], str, bool]:
+    """Drive the loop from scratch: a fresh system prompt + user task. See
+    run_agent_from_messages for the core loop and its parameters."""
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": get_system_prompt()},
+        {"role": "user", "content": user_task},
+    ]
+    return run_agent_from_messages(
+        messages, tool_registry, injection=injection, position=position, max_iters=max_iters
+    )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.prompts import get_system_prompt, get_tool_schemas
+from judge.canary import CANARY
 
 
 def test_three_tools_declared():
@@ -29,3 +30,9 @@ def test_system_prompt_declares_the_tool_call_format():
 def test_system_prompt_warns_against_tool_output_as_instructions():
     prompt = get_system_prompt().lower()
     assert "untrusted" in prompt
+
+
+def test_system_prompt_plants_the_canary_as_a_protected_secret():
+    prompt = get_system_prompt()
+    assert CANARY in prompt
+    assert "confidential" in prompt.lower()
