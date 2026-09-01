@@ -2,6 +2,57 @@
 
 Running log of decisions, gotchas, and things to revisit. Newest first.
 
+## Day 7 — 60-payload corpus, 6 families, frozen train/test split by family
+- `data/corpus/patterns.jsonl`: 60 `CorpusPattern` rows (new schema in
+  `schemas.py`: `id`, `family`, `text`, `source`, `notes`), 10 per family
+  across 6 families. Kept distinct from `AttackCase` on purpose -- this is
+  the raw retrieval corpus `attackers/rag.py` embeds (day 10+), not
+  something the runner drives directly.
+- `data/attacks/train.jsonl` (40 rows, families 1-4) and `test.jsonl` (20
+  rows, families 5-6) are the same 60 patterns reshaped into `AttackCase`
+  (`id -> name`, `notes -> technique`, `text -> injected_text`) so a
+  runner.py-style sweep can drive all 60 the way day 5 drove the 12
+  hand-written ones. `tests/test_split.py` pins the corpus and the split to
+  the same 60 IDs so they can't silently drift apart.
+- Families: `direct_override`, `fake_system_message`, `tool_call_emission`
+  (same three as day 5's hand-written set, now with 10 variants each
+  instead of 4) plus a new train family, `context_hijack` (persona/roleplay
+  jailbreak framing, e.g. "you are now DevModeGPT"). Held out for test:
+  `obfuscated_encoding` (base64/ROT13/hex/leetspeak/zero-width-space/
+  translation/Caesar-cipher/percent-encoding wrappers around the same
+  override instruction) and `structural_smuggling` (hiding the instruction
+  in an HTML comment, YAML frontmatter, image alt text, a footnote, JSON
+  metadata, a `display:none` block, a code comment, a table cell, or a fake
+  HTTP header). Full rationale for *why* those two are the held-out ones
+  (different attack mechanism, not just different wording) is in
+  `RESULTS.md`, "Corpus and the frozen train/test split."
+- **Split by family, never by row** -- a random row split would leak,
+  since payloads within a family are near-duplicate phrasings of the same
+  trick; a defender that memorized one would trivially "generalize" to the
+  other and inflate the day-18 test-set ASR for free.
+- Added `data_split.py`: `load_corpus()` and `load_train()` read freely;
+  `load_test()` raises unless called with `allow_test=True` *and*
+  `config.ALLOW_TEST_SPLIT` (`RT_ALLOW_TEST_SPLIT=1`) is set -- two
+  independent switches so neither a forgotten keyword argument nor a stray
+  env var alone can leak the held-out split into a pre-day-18 run.
+  `tests/test_split.py` exercises both the raise and the (deliberately
+  double-gated) success path.
+- One real bug caught by validating every line as JSON before trusting
+  it: an f-string `"}}"` in the generator script collapses to a single
+  literal `}` (Python's f-string escaping, not a typo in the payload text
+  itself), which left the `structural_smuggling` "hidden JSON metadata
+  field" example one closing brace short of valid JSON. Fixed by building
+  that one string with plain concatenation instead of an f-string, then
+  re-validated every one of the 60 lines with `json.loads` before writing
+  it up.
+- Generated the three JSONL files with a one-off local script (not part of
+  the repo -- the committed files are static, frozen content, not something
+  meant to be regenerated) so multi-encoding payloads (base64, ROT13, hex,
+  Caesar cipher, percent-encoding) came out byte-correct instead of
+  hand-transliterated.
+- `corpus-v1` tag marks this commit -- the commit-timestamp evidence for
+  week 3's "generalizes to unseen attack types" claim (see RESULTS.md).
+
 ## Day 6 — MCP stdio transport, agent unchanged behind the registry
 - **requirements.txt's `mcp==2.1.1` is the v2.x SDK, not v1.x.** The
   reference snippet's `from mcp.server.fastmcp import FastMCP` raises

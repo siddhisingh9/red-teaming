@@ -38,6 +38,20 @@ class AttackCase(BaseModel):
     injected_text: str  # the injection payload for this case
 
 
+class CorpusPattern(BaseModel):
+    """One row of data/corpus/patterns.jsonl -- the raw 60-pattern retrieval
+    corpus attackers/rag.py (day 10+) embeds and searches over FAISS
+    IndexFlatIP. Distinct from AttackCase: data/attacks/{train,test}.jsonl
+    are this same corpus, family-split and reshaped into AttackCase so
+    runner.py-style sweeps can drive them."""
+
+    id: str  # e.g. "F2-007" -- family index + sequence, unique across the corpus
+    family: str  # matches AttackCase.family for the derived train/test split
+    text: str  # the raw injection payload
+    source: str  # where this pattern came from -- a paper, OWASP category, or "own variant"
+    notes: str = ""  # short phrase on why/how the technique works
+
+
 class ToolCall(BaseModel):
     """A tool invocation the agent requests mid-turn."""
 
