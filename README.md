@@ -32,3 +32,9 @@ model more robust — without wrecking its utility on benign tasks.
 ## Status
 
 Day 1: repo scaffolded, split discipline documented, canary judge implemented.
+Days 2-7: real target model + tool-calling loop, tool simulator with a
+position knob, MCP transport, 12 hand-written attacks (19.4% ASR on
+Qwen2.5-3B), 60-payload corpus with a frozen train/test split by family.
+Day 8: `attackers/vanilla.py` -- Groq-backed vanilla attacker (caching,
+429 backoff), `attackers/goals.py`'s 40-triple goal list. Pending a real
+`GROQ_API_KEY` to run the actual generation checkpoint.

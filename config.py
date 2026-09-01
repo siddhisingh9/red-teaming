@@ -32,6 +32,9 @@ RESULTS_DIR = ROOT / "results"
 FAISS_INDEX_PATH = ROOT / "attackers" / "index.faiss"
 LORA_ADAPTER_DIR = ROOT / "defender" / "adapter"
 
+CACHE_DIR = ROOT / "cache"
+ATTACK_CACHE_DIR = CACHE_DIR / "attacks"  # keyed on (prompt, model, seed) hash -- see attackers/vanilla.py
+
 # --- run-time flags ------------------------------------------------------
 
 # Guards against accidentally loading the held-out test split before it's due.

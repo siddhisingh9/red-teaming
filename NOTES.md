@@ -2,6 +2,72 @@
 
 Running log of decisions, gotchas, and things to revisit. Newest first.
 
+## Day 8 — Groq vanilla attacker, caching + 429 backoff
+- `attackers/base.py`'s `Attacker` ABC method is `generate(goal, tool_name,
+  seed) -> AttackCase`, not the day-1 stub's `craft_injection(*args,
+  **kwargs)` -- finalizing the real signature now is what makes "swap
+  vanilla for rag" a one-line change later. Updated `attackers/rag.py`'s day
+  11 stub to the same signature so both arms conform from day 8 on, even
+  though its body still just raises `NotImplementedError`.
+- Kept the class-based shape already implied by the existing `rag.py` stub
+  (`class RagAttacker(Attacker)`) rather than the day's reference
+  pseudocode, which sketches `vanilla.py` as bare module-level functions.
+  The ABC only makes sense with a class implementing it, and matching
+  `rag.py`'s existing shape keeps both arms symmetric.
+- New `attackers/goals.py`: the 40 `(tool, position, benign_task)` triples
+  the attacker writes a payload for, kept separate from `vanilla.py` so
+  "what to ask for" and "how to ask the Groq API for it" don't tangle.
+  Built by interleaving the three tools round-robin (not all-`web_search`-
+  then-all-`read_file`-then-all-`fetch_url`) and rotating which position
+  each tool gets round-to-round, so `(tool, position)` never correlate --
+  confounding them here would make a later "ASR by position" breakdown over
+  the generated corpus meaningless, same reasoning as day 4's position
+  knob. `tests/test_vanilla.py::test_tool_and_position_are_not_confounded`
+  pins down that all 9 `(tool, position)` cells are actually populated.
+- **Not the same thing as `data/benign/tasks.jsonl`** (still empty, day
+  15+'s 30-task defender utility-eval set). `goals.py`'s benign tasks exist
+  only to give the attacker LLM a plausible scenario to blend a payload
+  into; they're not evaluating anything themselves.
+- `attackers/vanilla.py`'s `VanillaAttacker.generate()`: builds the system
+  prompt from the day's reference template (canary objective + `{tool_name}`
+  slot), hashes `(system, goal, model, seed)` to a cache key, and checks
+  `cache/attacks/<hash>.json` before calling Groq at all. Cache file also
+  keeps `goal`/`tool_name`/`seed`/`model`/`temperature` alongside the raw
+  payload -- cheap now, and the only way a "why did this generation look
+  like that" question is answerable later without re-running it.
+- 429 handling: catches `groq.RateLimitError` specifically (other
+  exceptions propagate immediately -- fail fast rather than retry blindly),
+  honors the response's `retry-after` header when Groq sends one, otherwise
+  exponential backoff from 1s doubling each attempt, plus jitter to avoid a
+  thundering herd if this is ever run concurrently. Gives up after 6
+  attempts with a clear `RuntimeError`. Added `cache/` to `.gitignore` and
+  `config.ATTACK_CACHE_DIR` alongside the project's other path constants.
+- **This machine has no GROQ_API_KEY configured** (no `.env` file at all --
+  same "no GPU" situation as days 2/3/5/6, just a different missing
+  resource). Verified the whole mechanism -- caching, cache-key sensitivity
+  to seed, 429-then-succeed backoff, giving up after max retries, and a
+  generated `AttackCase` running end-to-end through `runner.run_one()` -- by
+  substituting a fake Groq client for `VanillaAttacker._client` in
+  `tests/test_vanilla.py` (13 tests, all passing), the same pattern
+  `tests/test_loop.py` already used for `agent.model.generate`. The actual
+  green checkpoint (10 real generations, eyeballed for non-emptiness and
+  variety, cache hit instant on a re-run) still needs a real key -- `python
+  -m attackers.vanilla -n 10` is wired up to run it the moment one's
+  available, writing to `cache/attacks/`.
+- Noticed in passing: `requirements.txt` pins `groq==1.7.0` but this
+  machine has `0.4.2` installed. Didn't chase it down (day 8 doesn't need
+  the fix) -- confirmed the `chat.completions.create(model=, temperature=,
+  seed=, messages=)` signature and the `RateLimitError` shape used here are
+  present and match on `0.4.2`, so the code as written should carry over,
+  but worth re-checking if a future day hits something `0.4.2`-specific.
+- `AttackCase.family` for every vanilla-generated case is the literal string
+  `"vanilla"`, not a technique family like the corpus's `direct_override`
+  etc. The vanilla arm doesn't know a family a priori -- that's the point,
+  it's supposed to improvise rather than draw from the corpus's taxonomy --
+  so `family` here identifies the *arm* for the day-9 vanilla-vs-rag
+  ablation, not a technique bucket. `technique` instead records the
+  generation call's own provenance (model/seed/temperature).
+
 ## Day 7 — 60-payload corpus, 6 families, frozen train/test split by family
 - `data/corpus/patterns.jsonl`: 60 `CorpusPattern` rows (new schema in
   `schemas.py`: `id`, `family`, `text`, `source`, `notes`), 10 per family

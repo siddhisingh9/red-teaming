@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from attackers.base import Attacker
+from schemas import AttackCase
 
 
 class RagAttacker(Attacker):
-    def craft_injection(self, *args, **kwargs) -> str:
+    def generate(self, goal: str, tool_name: str, seed: int) -> AttackCase:
         raise NotImplementedError("attackers/rag.py is scheduled for day 11")
