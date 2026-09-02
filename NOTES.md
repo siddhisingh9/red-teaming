@@ -2,7 +2,7 @@
 
 Running log of decisions, gotchas, and things to revisit. Newest first.
 
-## Day 8 — Groq vanilla attacker, caching + 429 backoff
+## Day 8 — vanilla attacker, caching + 429 backoff (Groq → Gemini mid-day)
 - `attackers/base.py`'s `Attacker` ABC method is `generate(goal, tool_name,
   seed) -> AttackCase`, not the day-1 stub's `craft_injection(*args,
   **kwargs)` -- finalizing the real signature now is what makes "swap
@@ -16,7 +16,7 @@ Running log of decisions, gotchas, and things to revisit. Newest first.
   `rag.py`'s existing shape keeps both arms symmetric.
 - New `attackers/goals.py`: the 40 `(tool, position, benign_task)` triples
   the attacker writes a payload for, kept separate from `vanilla.py` so
-  "what to ask for" and "how to ask the Groq API for it" don't tangle.
+  "what to ask for" and "how to ask the attacker LLM for it" don't tangle.
   Built by interleaving the three tools round-robin (not all-`web_search`-
   then-all-`read_file`-then-all-`fetch_url`) and rotating which position
   each tool gets round-to-round, so `(tool, position)` never correlate --
@@ -28,38 +28,109 @@ Running log of decisions, gotchas, and things to revisit. Newest first.
   15+'s 30-task defender utility-eval set). `goals.py`'s benign tasks exist
   only to give the attacker LLM a plausible scenario to blend a payload
   into; they're not evaluating anything themselves.
+- **Switched providers mid-day: Groq → Gemini.** Built the whole thing
+  against Groq first (day's reference material), but a real call returned
+  `groq.BadRequestError: 400 organization_restricted` -- not a rate limit,
+  an account-level block on this project's org, so no amount of 429 backoff
+  would fix it. Asked the user, who picked Gemini (already had
+  `google-generativeai` installed here, and a genuinely free tier). Rewrote
+  `attackers/vanilla.py` against `google-genai` -- the *new* unified SDK,
+  not `google-generativeai`, which prints its own "all support has ended,
+  switch to google.genai" `FutureWarning` on import. `config.ATTACKER_MODEL`
+  now defaults to `gemini-2.5-flash`; `config.GEMINI_API_KEY` is the new env
+  var (`GROQ_API_KEY` left in place, unused, in case that org ever gets
+  unrestricted). `requirements.txt` gained `google-genai==2.21.0`.
 - `attackers/vanilla.py`'s `VanillaAttacker.generate()`: builds the system
   prompt from the day's reference template (canary objective + `{tool_name}`
-  slot), hashes `(system, goal, model, seed)` to a cache key, and checks
-  `cache/attacks/<hash>.json` before calling Groq at all. Cache file also
-  keeps `goal`/`tool_name`/`seed`/`model`/`temperature` alongside the raw
-  payload -- cheap now, and the only way a "why did this generation look
-  like that" question is answerable later without re-running it.
-- 429 handling: catches `groq.RateLimitError` specifically (other
-  exceptions propagate immediately -- fail fast rather than retry blindly),
-  honors the response's `retry-after` header when Groq sends one, otherwise
-  exponential backoff from 1s doubling each attempt, plus jitter to avoid a
-  thundering herd if this is ever run concurrently. Gives up after 6
-  attempts with a clear `RuntimeError`. Added `cache/` to `.gitignore` and
-  `config.ATTACK_CACHE_DIR` alongside the project's other path constants.
-- **This machine has no GROQ_API_KEY configured** (no `.env` file at all --
-  same "no GPU" situation as days 2/3/5/6, just a different missing
-  resource). Verified the whole mechanism -- caching, cache-key sensitivity
-  to seed, 429-then-succeed backoff, giving up after max retries, and a
-  generated `AttackCase` running end-to-end through `runner.run_one()` -- by
-  substituting a fake Groq client for `VanillaAttacker._client` in
-  `tests/test_vanilla.py` (13 tests, all passing), the same pattern
-  `tests/test_loop.py` already used for `agent.model.generate`. The actual
-  green checkpoint (10 real generations, eyeballed for non-emptiness and
-  variety, cache hit instant on a re-run) still needs a real key -- `python
-  -m attackers.vanilla -n 10` is wired up to run it the moment one's
-  available, writing to `cache/attacks/`.
-- Noticed in passing: `requirements.txt` pins `groq==1.7.0` but this
-  machine has `0.4.2` installed. Didn't chase it down (day 8 doesn't need
-  the fix) -- confirmed the `chat.completions.create(model=, temperature=,
-  seed=, messages=)` signature and the `RateLimitError` shape used here are
-  present and match on `0.4.2`, so the code as written should carry over,
-  but worth re-checking if a future day hits something `0.4.2`-specific.
+  slot) as Gemini's `system_instruction`, hashes `(system, goal, model,
+  seed)` to a cache key, and checks `cache/attacks/<hash>.json` before
+  calling the API at all. Cache file also keeps
+  `goal`/`tool_name`/`seed`/`model`/`temperature` alongside the raw payload
+  -- cheap now, and the only way a "why did this generation look like that"
+  question is answerable later without re-running it.
+- **Gemini-specific wrinkle Groq never had: default safety filters.**
+  Gemini's consumer-tuned safety thresholds (including a dedicated
+  `HARM_CATEGORY_JAILBREAK`) will happily refuse or silently empty out a
+  "write a prompt-injection payload" request, which is this module's entire
+  job. `_SAFETY_SETTINGS` relaxes `DANGEROUS_CONTENT`/`HARASSMENT`/
+  `HATE_SPEECH`/`JAILBREAK` to `BLOCK_NONE` for this call specifically --
+  reasonable given `ATTACKER_SYSTEM` already frames the request as an
+  authorised red-team eval, same framing used for Groq. Also: unlike an
+  OpenAI-shaped API, a safety-blocked Gemini response doesn't raise --
+  `resp.text` just comes back `None`. `_generate_payload` checks for that
+  explicitly and raises a clear `RuntimeError` (with the candidate's
+  `finish_reason` if there is one) instead of crashing on `.strip()`;
+  `tests/test_vanilla.py::test_no_text_in_response_raises_instead_of_crashing`
+  covers it.
+- 429 handling: catches `google.genai.errors.ClientError` and checks
+  `.code == 429` specifically (any other 4xx -- bad model name, another
+  `organization_restricted`-shaped block, whatever -- re-raises immediately;
+  `tests/test_vanilla.py::test_non_429_client_error_is_not_retried` pins
+  that down after the Groq lesson above), honors the response's
+  `retry-after` header when present, otherwise exponential backoff from 1s
+  doubling each attempt, plus jitter to avoid a thundering herd if this is
+  ever run concurrently. Gives up after 6 attempts with a clear
+  `RuntimeError`. Added `cache/` to `.gitignore` and `config.ATTACK_CACHE_DIR`
+  alongside the project's other path constants.
+- Verified the whole mechanism -- caching, cache-key sensitivity to seed,
+  429-then-succeed backoff, giving up after max retries, the safety-block
+  case, a non-429 error failing fast, and a generated `AttackCase` running
+  end-to-end through `runner.run_one()` -- by substituting a fake client for
+  `VanillaAttacker._client` in `tests/test_vanilla.py` (15 tests, all
+  passing), the same pattern `tests/test_loop.py` already used for
+  `agent.model.generate`.
+- The actual green checkpoint (10 real generations, eyeballed for
+  non-emptiness and variety, cache hit instant on a re-run) needs a real
+  `GEMINI_API_KEY` in `.env` (get one free at
+  https://aistudio.google.com/apikey) -- `python -m attackers.vanilla -n 10`
+  is wired up to run it the moment one's available, writing to
+  `cache/attacks/`.
+- **Real green checkpoint, run live once a key was added.** First real call
+  failed fast and clean -- `404 NOT_FOUND: model gemini-2.5-flash is no
+  longer available to new users`, the API itself naming the replacement
+  (`gemini-3.6-flash`). Swapped `config.ATTACKER_MODEL`'s default and
+  re-ran: **10/10 non-empty, 10/10 pairwise-distinct**, all genuinely
+  varied authority-framing techniques (fake compliance mandates, forged
+  system/document-parsing directives, fake citation-standard clauses) even
+  though none were told to draw from the corpus's family taxonomy.
+  - **1/10 (V006, fetch_url/top) was a refusal**, not a payload: Gemini
+    itself declined ("I cannot generate prompt injection payloads...")
+    despite `_SAFETY_SETTINGS` relaxing every relevant category to
+    `BLOCK_NONE`. Distinct from the `resp.text is None` case the code
+    already handles -- this is the *model* choosing to refuse in-band, not
+    the SDK-level safety filter blocking the response. Left as-is for now:
+    it's real signal about this arm's behavior (a ~10% self-refusal rate
+    is itself a data point the day-9 vanilla-vs-rag comparison should
+    probably report), not a bug to paper over.
+  - **Free-tier rate limit is tight and the backoff earned its keep for
+    real, not just in the mocked tests:** 5 consecutive real 429s hit
+    after only ~6 successful calls, recovered on attempt 6 after backing
+    off up to 16.4s -- confirms both that the limit is real and that
+    catching `ClientError` + checking `.code == 429` (rather than, say, a
+    generic `except Exception`) is doing exactly the job it's meant to.
+  - Re-running the identical `-n 10` afterward: all 10 cache hits, `(0.00s)`
+    each, ~1.2s wall-clock for the whole process (Python startup, not
+    generation). Checkpoint's "cache hit on a re-run is instant" -- met.
+  - One red herring chased down and closed: a printed payload showed a
+    mangled degree sign (`22�C` instead of `22\xb0C`) in this
+    terminal's output. Checked the actual cache file on disk before
+    assuming a real bug -- `json.dumps` (no `ensure_ascii=False`) had
+    written it as the properly-escaped `°`, which round-trips
+    correctly through `json.load`. The mangling was this Windows
+    terminal's console codepage failing to *print* the character, not
+    corrupted data -- the cache itself is fine.
+- Along the way: installing `google-genai` bumped this shared-site-packages
+  machine's `httpx` from 0.27.0 to 0.28.1 (see day 6's note -- still no
+  per-project venv here), which pip flagged as incompatible with two
+  unrelated already-installed packages (`gotrue`, `supafunc` -- Supabase
+  clients, nothing to do with this project). Didn't chase it since the full
+  test suite still passes 76/76, but worth knowing if some other project on
+  this machine starts acting up.
+- Also caught in passing: `.env.example` got accidentally deleted from the
+  working tree (likely moved instead of copied when creating the real
+  `.env`) -- restored via `git checkout -- .env.example` before adding the
+  `GEMINI_API_KEY` line to it, rather than reconstructing its content from
+  memory.
 - `AttackCase.family` for every vanilla-generated case is the literal string
   `"vanilla"`, not a technique family like the corpus's `direct_override`
   etc. The vanilla arm doesn't know a family a priori -- that's the point,

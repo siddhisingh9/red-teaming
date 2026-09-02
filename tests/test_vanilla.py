@@ -1,7 +1,7 @@
 """Day 8 tests: attackers/base.py's Attacker ABC, attackers/goals.py's
-40-triple goal list, and attackers/vanilla.py's Groq-backed attacker --
+40-triple goal list, and attackers/vanilla.py's Gemini-backed attacker --
 caching, 429 backoff, and a real end-to-end run through runner.run_one()
-with a generated case. The real Groq client is never hit here: a fake
+with a generated case. The real Gemini client is never hit here: a fake
 client stands in throughout, matching how tests/test_loop.py monkeypatches
 agent.loop.generate instead of calling the real model."""
 
@@ -11,7 +11,7 @@ import json
 
 import httpx
 import pytest
-from groq import RateLimitError
+from google.genai.errors import ClientError
 
 import config
 from attackers.base import Attacker
@@ -23,58 +23,43 @@ from schemas import AttackCase, Outcome
 # --- fakes -------------------------------------------------------------
 
 
-class _FakeMessage:
-    def __init__(self, content: str) -> None:
-        self.content = content
+class _FakeResponse:
+    def __init__(self, text: str | None) -> None:
+        self.text = text
+        self.candidates: list = []
 
 
-class _FakeChoice:
-    def __init__(self, content: str) -> None:
-        self.message = _FakeMessage(content)
-
-
-class _FakeCompletion:
-    def __init__(self, content: str) -> None:
-        self.choices = [_FakeChoice(content)]
-
-
-def _rate_limit_error(retry_after: str | None = "0") -> RateLimitError:
-    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+def _client_error(code: int = 429, retry_after: str | None = "0") -> ClientError:
+    req = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models")
     headers = {"retry-after": retry_after} if retry_after else {}
-    resp = httpx.Response(429, headers=headers, request=req)
-    return RateLimitError("rate limited", response=resp, body=None)
+    resp = httpx.Response(code, headers=headers, request=req)
+    return ClientError(code, {"message": "rate limited"}, response=resp)
 
 
-class _FakeCompletions:
-    """queue of things to do on successive .create() calls: either raise
-    the given exception, or return a canned payload string."""
+class _FakeModels:
+    """queue of things to do on successive .generate_content() calls:
+    either raise the given exception, or return a canned payload string."""
 
     def __init__(self, script: list) -> None:
         self.script = list(script)
         self.calls: list[dict] = []
 
-    def create(self, **kwargs):
+    def generate_content(self, **kwargs):
         self.calls.append(kwargs)
         step = self.script.pop(0)
         if isinstance(step, Exception):
             raise step
-        return _FakeCompletion(step)
-
-
-class _FakeChat:
-    def __init__(self, completions: _FakeCompletions) -> None:
-        self.completions = completions
+        return _FakeResponse(step)
 
 
 class _FakeClient:
     def __init__(self, script: list) -> None:
-        self.completions = _FakeCompletions(script)
-        self.chat = _FakeChat(self.completions)
+        self.models = _FakeModels(script)
 
 
 def _attacker_with_script(script: list, tmp_path, monkeypatch) -> VanillaAttacker:
     monkeypatch.setattr(config, "ATTACK_CACHE_DIR", tmp_path / "cache" / "attacks")
-    attacker = VanillaAttacker(model="llama-3.3-70b-versatile")
+    attacker = VanillaAttacker(model="gemini-2.5-flash")
     attacker._client = _FakeClient(script)
     return attacker
 
@@ -139,7 +124,7 @@ def test_second_call_with_same_inputs_is_a_cache_hit(tmp_path, monkeypatch):
     second = attacker.generate("do the thing", "web_search", seed=1)
 
     assert second.injected_text == first.injected_text
-    assert len(attacker._client.completions.calls) == 1
+    assert len(attacker._client.models.calls) == 1
 
 
 def test_different_seed_is_not_a_cache_hit(tmp_path, monkeypatch):
@@ -149,7 +134,7 @@ def test_different_seed_is_not_a_cache_hit(tmp_path, monkeypatch):
     b = attacker.generate("do the thing", "web_search", seed=2)
 
     assert a.injected_text != b.injected_text
-    assert len(attacker._client.completions.calls) == 2
+    assert len(attacker._client.models.calls) == 2
 
 
 def test_cache_is_written_to_disk_keyed_on_a_hash(tmp_path, monkeypatch):
@@ -166,7 +151,7 @@ def test_cache_is_written_to_disk_keyed_on_a_hash(tmp_path, monkeypatch):
 def test_429_triggers_backoff_then_succeeds(tmp_path, monkeypatch):
     monkeypatch.setattr("attackers.vanilla.time.sleep", lambda _seconds: None)
     attacker = _attacker_with_script(
-        [_rate_limit_error(), _rate_limit_error(), "succeeded after two 429s"],
+        [_client_error(), _client_error(), "succeeded after two 429s"],
         tmp_path,
         monkeypatch,
     )
@@ -174,17 +159,39 @@ def test_429_triggers_backoff_then_succeeds(tmp_path, monkeypatch):
     case = attacker.generate("do the thing", "web_search", seed=1)
 
     assert case.injected_text == "succeeded after two 429s"
-    assert len(attacker._client.completions.calls) == 3
+    assert len(attacker._client.models.calls) == 3
 
 
 def test_429_forever_raises_after_max_retries(tmp_path, monkeypatch):
     monkeypatch.setattr("attackers.vanilla.time.sleep", lambda _seconds: None)
     monkeypatch.setattr("attackers.vanilla.MAX_RETRIES", 3)
     attacker = _attacker_with_script(
-        [_rate_limit_error(), _rate_limit_error(), _rate_limit_error()], tmp_path, monkeypatch
+        [_client_error(), _client_error(), _client_error()], tmp_path, monkeypatch
     )
 
     with pytest.raises(RuntimeError, match="rate-limited"):
+        attacker.generate("do the thing", "web_search", seed=1)
+
+
+def test_non_429_client_error_is_not_retried(tmp_path, monkeypatch):
+    """A 400 (e.g. a bad model name, or an org restriction like the one
+    that took Groq out) should fail fast, not burn through backoff -- only
+    429 means 'try again later'."""
+    attacker = _attacker_with_script([_client_error(code=400, retry_after=None)], tmp_path, monkeypatch)
+
+    with pytest.raises(ClientError):
+        attacker.generate("do the thing", "web_search", seed=1)
+
+    assert len(attacker._client.models.calls) == 1
+
+
+def test_no_text_in_response_raises_instead_of_crashing(tmp_path, monkeypatch):
+    """Gemini's .text is None (not an exception) when a response is safety-
+    blocked or otherwise empty -- generate() must turn that into a clear
+    error, not an AttributeError from calling .strip() on None."""
+    attacker = _attacker_with_script([None], tmp_path, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="no text"):
         attacker.generate("do the thing", "web_search", seed=1)
 
 

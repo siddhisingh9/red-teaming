@@ -10,7 +10,7 @@ model more robust — without wrecking its utility on benign tasks.
   chat model. Talks to simulated tools (`tools/sim.py`) or a real MCP server
   (`tools/mcp_server.py`).
 - **Attackers** (`attackers/`): two arms —
-  - `vanilla.py`: a Groq-backed model with no retrieval, improvising attacks.
+  - `vanilla.py`: a Gemini-backed model with no retrieval, improvising attacks.
   - `rag.py`: retrieves from a corpus of known injection patterns
     (`data/corpus/patterns.jsonl`, FAISS `IndexFlatIP`) and splices them into
     tool outputs before generation.
@@ -35,6 +35,7 @@ Day 1: repo scaffolded, split discipline documented, canary judge implemented.
 Days 2-7: real target model + tool-calling loop, tool simulator with a
 position knob, MCP transport, 12 hand-written attacks (19.4% ASR on
 Qwen2.5-3B), 60-payload corpus with a frozen train/test split by family.
-Day 8: `attackers/vanilla.py` -- Groq-backed vanilla attacker (caching,
-429 backoff), `attackers/goals.py`'s 40-triple goal list. Pending a real
-`GROQ_API_KEY` to run the actual generation checkpoint.
+Day 8: `attackers/vanilla.py` -- Gemini-backed vanilla attacker (caching,
+429 backoff; switched from Groq after this project's org got restricted),
+`attackers/goals.py`'s 40-triple goal list. Green checkpoint met live:
+10/10 non-empty, 10/10 distinct payloads, cache hit instant on a re-run.

@@ -42,10 +42,11 @@ ALLOW_TEST_SPLIT = os.environ.get("RT_ALLOW_TEST_SPLIT", "0") == "1"
 
 # --- model settings ------------------------------------------------------
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")  # unused since day 8's switch to Gemini -- kept in case a Groq org gets unrestricted later
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 AGENT_MODEL = os.environ.get("RT_AGENT_MODEL", "llama-3.1-8b-instant")
-ATTACKER_MODEL = os.environ.get("RT_ATTACKER_MODEL", "llama-3.3-70b-versatile")
+ATTACKER_MODEL = os.environ.get("RT_ATTACKER_MODEL", "gemini-3.6-flash")
 
 # Tool transport: "direct" calls tools/sim.py in-process (fast, for
 # day-to-day debugging); "mcp" round-trips through tools/mcp_client.py's
