@@ -25,6 +25,10 @@ LOGS_DIR = ROOT / "logs"
 RUNS_LOG_PATH = LOGS_DIR / "runs.jsonl"
 CONTROL_LOG_PATH = LOGS_DIR / "control_runs.jsonl"
 MCP_LOG_PATH = LOGS_DIR / "mcp_runs.jsonl"
+GEN0_LOG_PATH = LOGS_DIR / "gen0_runs.jsonl"  # day 9's vanilla baseline -- kept separate from
+# runs.jsonl, which already has some pre-day-4-schema stale test records mixed into it (see NOTES.md)
+
+IDS_PATH = ROOT / "attackers" / "ids.json"  # day 10: FAISS row -> AttackCase.name, next to index.faiss
 
 FIGURES_DIR = ROOT / "figures"
 RESULTS_DIR = ROOT / "results"

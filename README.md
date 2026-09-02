@@ -39,3 +39,11 @@ Day 8: `attackers/vanilla.py` -- Gemini-backed vanilla attacker (caching,
 429 backoff; switched from Groq after this project's org got restricted),
 `attackers/goals.py`'s 40-triple goal list. Green checkpoint met live:
 10/10 non-empty, 10/10 distinct payloads, cache hit instant on a re-run.
+Day 9: `gen0.py`'s generation-0 baseline (40 goals x 3 positions x 1 seed
+= 120 runs), `RunRecord` extended with `run_id`/`git_sha`/model IDs/
+`latency_s`, resume-on-kill verified. The real 120-run sweep needs a GPU
+(Colab) for the target model; not yet run. Day 10: `attackers/build_index.py`
+-- FAISS `IndexFlatIP` over the train-family corpus
+(`sentence-transformers/all-MiniLM-L6-v2`), run for real: 40 vectors, a
+"ignore previous instructions"-style query's top 3 all land in
+`direct_override` with scores in the expected ~0.3-0.8 band.

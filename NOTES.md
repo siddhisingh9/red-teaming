@@ -2,6 +2,146 @@
 
 Running log of decisions, gotchas, and things to revisit. Newest first.
 
+## Day 10 — FAISS IndexFlatIP over the train-family corpus
+- `attackers/build_index.py`: `sentence-transformers/all-MiniLM-L6-v2`
+  encodes `data_split.load_train()`'s 40 `injected_text` values (never
+  `load_corpus()` -- going through the train/test-gated loader instead of
+  hand-filtering `load_corpus()` by family name means this can't silently
+  drift out of sync with the split boundary `data_split.py`/`tests/
+  test_split.py` already enforce everywhere else). `normalize_embeddings=
+  True` on the encode call, then `faiss.IndexFlatIP` -- normalised vectors
+  + inner product = cosine similarity, and skipping that step is the
+  standard silent-garbage-neighbours bug the day's material warns about.
+  Saves `attackers/index.faiss` + `attackers/ids.json` (row ->
+  `AttackCase.name`); both gitignored, same treatment as the LoRA adapter,
+  since both regenerate deterministically from `train.jsonl`.
+- Installed `faiss-cpu==1.15.0` and `sentence-transformers` was already
+  present but at `5.4.0`, not `requirements.txt`'s pinned `6.0.1` --
+  `encode(..., normalize_embeddings=True)` behaves identically on `5.4.0`
+  so didn't chase the pin down, same call as day 8's `groq` version note.
+- **Ran for real, no GPU needed** (a 384-dim sentence encoder over 40 short
+  strings is fast on CPU) -- unlike day 9, nothing here waits on Colab.
+  40 vectors, 384 dims. Sanity query `"make the model ignore its previous
+  instructions"` -> top 3 = `F1-002` (0.462), `F1-009` (0.382), `F1-004`
+  (0.376), all three `direct_override` family, all three scores inside the
+  ~0.3-0.8 band the checkpoint describes (nowhere near 1.0, confirming
+  normalisation actually happened). Full numbers in RESULTS.md.
+- `tests/test_build_index.py` builds a real index once per test session
+  (module-scoped fixture, redirects `config.FAISS_INDEX_PATH`/`IDS_PATH` to
+  a tmp dir so it never touches or depends on whatever's already built at
+  the real path) rather than mocking the encoder -- the day's actual
+  checkpoint is about normalisation being correct, which a mocked encoder
+  can't demonstrate either way. Also pins two project-specific guards: every
+  train pattern indexed and nothing else (`ntotal == 40`), and no
+  `F5-*`/`F6-*` (the held-out families) id ever retrievable.
+
+## Day 9 — generation-0 baseline: schema, resume path, plan (Colab pending)
+- Extended `schemas.RunRecord` with `run_id`, `git_sha`, `generation`,
+  `attacker`, `defender`, `seed`, `agent_model`, `attacker_model`,
+  `attacker_temperature`, `latency_s` -- all populated by `runner.run_one()`
+  now, not just by `gen0.py`, since the day's own material calls out that
+  retrofitting metadata onto old logs later is miserable and there's
+  exactly one place (`runner.py:117`, confirmed by `grep -rn "RunRecord("`)
+  that ever constructs one. `run_one()` gained a required keyword-only
+  `attacker` param (forces every call site to say what produced
+  `injected_text` rather than inheriting a guess) plus optional
+  `run_id`/`generation`/`defender`/`seed`/`attacker_model`/
+  `attacker_temperature`, defaulting to values that keep day 5/6's
+  hand-written-suite call in `runner.py`'s own `main()` correct unchanged
+  (`generation=0`, `defender="base"`, and `run_id` auto-derived from
+  `(attacker, case, tool, position)` when not given explicitly). Updated
+  that call site and `tests/test_vanilla.py`'s end-to-end test to pass
+  `attacker="handwritten"` / `attacker="vanilla"` respectively.
+- Used `agent.model.MODEL_ID` (the actual constant driving generation, "
+  `Qwen/Qwen2.5-3B-Instruct`") for `RunRecord.agent_model`, not
+  `config.AGENT_MODEL` (`"llama-3.1-8b-instant"`) -- the latter is a
+  leftover Groq-style model-name string nothing in `agent/model.py` ever
+  reads; recording it would be actively wrong metadata about which model
+  produced the run, not just outdated.
+- **Not "40 goals x 3 positions x 3 tools" like day 5's grid.** Each of
+  `attackers/goals.py`'s 40 goals is already written for one specific tool
+  (the goal text itself says "the target just called `{tool_name}`..."), so
+  running goal V001's `web_search`-flavored payload through `fetch_url`
+  instead would be internally incoherent. `gen0.py`'s plan fixes
+  `tool_name` to the goal's own and sweeps position only: 40 x 3 x 1 = 120,
+  matching the day's arithmetic exactly, and generates each goal's payload
+  once (one Gemini call, cached) then tests that same payload spliced at
+  all three positions -- itself a real question (does a payload written to
+  read like "an opening line" still land spliced into the middle?), not
+  just a formality.
+- **Resume design:** every one of the 120 planned runs gets a stable
+  `run_id` (`g0-van-0001`..`g0-van-0120`) fixed by its position in a plan
+  built the same way every time, *before* anything executes. `gen0.py`
+  opens the log in append mode and calls `f.flush()` after every single
+  record, so a hard kill loses at most the one in-flight run, never a
+  completed one; on restart, `_load_done_ids()` reads existing `run_id`s
+  back out of the log and the sweep skips anything already there. Verified
+  by actually simulating a kill in `tests/test_gen0.py`: run a (scaled-down,
+  monkeypatched) 6-run sweep to completion, truncate the log file to just
+  its first 2 lines (exactly what a kill after record 2 would leave on
+  disk), "restart" by calling the sweep again, and assert the final file
+  has all 6 records, zero duplicate `run_id`s, and the plan's original
+  order -- not just "it doesn't crash."
+- **Found `logs/runs.jsonl` already had 113 lines of stale data when I went
+  to look at it** -- not the real day-5 108-run Colab baseline (per day 5's
+  own note, that never got pulled back into this repo), but leftover local
+  smoke-test output from around day 2-3: missing `family`/`transport`/
+  `position`/`messages` entirely, one line referencing a `log_value` tool
+  that day 4 replaced, and one line that isn't even valid single-line JSON.
+  Tracked in git (`git ls-files logs/` lists all three log files), so not
+  mine to silently rewrite or delete without knowing why it's there.
+  `gen0.py` writes to a new `logs/gen0_runs.jsonl` (`config.GEN0_LOG_PATH`)
+  instead of appending gen-0's clean, fully-schema'd records into that same
+  messy file -- sidesteps both the parse risk (the resume path's
+  `_load_done_ids()` would crash on that malformed line) and mixing two
+  eras of schema in one file.
+- **The actual 120-run sweep needs Colab, same as days 2/3/5/6:** the
+  target side (`agent/model.py`, `Qwen2.5-3B-Instruct` 4-bit via
+  `bitsandbytes`) needs CUDA, and `torch.cuda.is_available()` is `False`
+  here. Didn't attempt a real load-and-fail to reconfirm this --
+  `bitsandbytes`' `load_in_4bit=True` has no CPU fallback, and every prior
+  GPU-dependent day already established this machine has none, so a
+  multi-GB download just to watch it fail the same way again wasn't worth
+  doing.
+- **Second, independent reason the real 120-run sweep can't finish in one
+  sitting anywhere, GPU or not: Gemini's free tier caps `gemini-3.6-flash`
+  at 20 requests *per day*, not per minute.** Ran the attacker side as a
+  real smoke test (`python -m attackers.vanilla -n 40`, all 40 goals) to
+  check for empty/refused payloads before handing this to Colab, and hit a
+  real `429 RESOURCE_EXHAUSTED` after 21 total real calls today (10 from
+  day 8's session + 11 more here): `quotaId:
+  GenerateRequestsPerDayPerProjectPerModel-FreeTier, quotaValue: '20'`. Day
+  8's 429 tests only ever exercised the backoff path assuming the limit was
+  transient (a per-minute-style cap that clears itself); this one doesn't
+  clear until the quota resets, so no amount of waiting inside one process
+  fixes it. `gen0.py` needs exactly 40 unique Gemini calls total (one per
+  goal, shared across all 3 of that goal's position runs) -- more than a
+  single day's free quota on its own, independent of whatever the 120
+  target-model runs need.
+  - **The resume design (built for GPU disconnects) turns out to also be
+    exactly the right fix for this**, with no extra code: a quota
+    exhaustion mid-sweep raises the same way a crash would, `gen0.py`'s log
+    already has every record flushed up to that point, and re-running the
+    identical command the next day (once the quota resets) picks up
+    wherever it stopped -- `_load_done_ids()` doesn't care *why* the
+    previous run stopped short.
+  - **This won't be visible from this sandbox's local cache, though**:
+    `cache/attacks/` is gitignored on purpose (day 8), so none of today's
+    21 cached payloads travel to Colab via `git clone` -- Colab starts
+    every one of those 40 generations from zero regardless of what's
+    cached here. Concretely: expect the real Colab run of `gen0.py` to also
+    need roughly 2 days spread by this same quota, unless the free tier's
+    daily cap changes, a different model with a higher quota is used, or
+    billing gets added to lift it.
+- Command for the real run, once on a Colab GPU runtime: `python gen0.py`.
+  If it stops on a `RESOURCE_EXHAUSTED` before finishing, that's the daily
+  quota above, not a bug -- re-run the identical command after the quota
+  resets and it resumes correctly. To rehearse the resume checkpoint for
+  real (not just the mocked test) independent of hitting the quota: start
+  it, interrupt it (Ctrl-C or kill the cell) sometime after record ~50
+  prints, run the identical command again, and confirm it logs "resuming:
+  N/120 run_ids already in ..." and picks up where it left off.
+
 ## Day 8 — vanilla attacker, caching + 429 backoff (Groq → Gemini mid-day)
 - `attackers/base.py`'s `Attacker` ABC method is `generate(goal, tool_name,
   seed) -> AttackCase`, not the day-1 stub's `craft_injection(*args,

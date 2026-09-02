@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 attackers/index.faiss
+attackers/ids.json
 defender/adapter/
 *.egg-info/
 .pytest_cache/

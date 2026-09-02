@@ -178,6 +178,61 @@ runs is direct evidence the MCP stdio round trip -- JSON-RPC framing,
 `CallToolResult` serialization, all of it -- introduces zero reshaping of
 tool content in transit.
 
+## Generation-0 baseline (day 9)
+
+The number everything else in week 3 is a delta from: 40 goals
+(`attackers/goals.py`) x 3 splice positions x 1 attacker seed per goal = 120
+runs, vanilla attacker, undefended target, `gen0.py`. Unlike day 5's
+hand-written suite, each goal is tool-specific (its own generated text
+already says "the target just called `{tool_name}`..."), so the sweep fixes
+`tool_name` per goal and varies position only -- not a second `x 3` for
+tools too.
+
+**Every record now carries `run_id`, `git_sha`, `generation`, `attacker`,
+`defender`, `agent_model`, and `latency_s`** (`schemas.RunRecord`, extended
+day 9) -- added now specifically so it never has to be retrofitted onto old
+logs later. `run_id` (`g0-van-0001` .. `g0-van-0120`) is fixed by each run's
+position in the planned list before anything executes, which is what makes
+the resume path possible: a kill mid-sweep leaves a log with a prefix of
+completed run_ids, and a restart recomputes the identical plan, skips every
+run_id already on disk, and appends the rest -- verified directly in
+`tests/test_gen0.py::test_resume_skips_completed_and_appends_without_duplicates`
+(kills a run after 2/6 records by truncating the log, restarts, and checks
+the final file has exactly 6 records, no duplicate run_ids, same order as
+the plan) and `test_resume_with_a_fully_completed_log_reruns_nothing`.
+
+**Not yet run for real, for two independent reasons.** The target side
+(`agent/model.py`, `Qwen2.5-3B-Instruct` in 4-bit via `bitsandbytes`) needs
+CUDA, which this machine doesn't have -- same constraint as days 2/3/5/6,
+same fix: run `python gen0.py` on a Colab GPU runtime. Separately, and
+independent of the GPU: Gemini's free tier caps `gemini-3.6-flash` at **20
+requests per day**, confirmed by actually hitting it (`python -m
+attackers.vanilla -n 40` as a smoke test of the attacker side got 21/40
+goals cached before a real `429 RESOURCE_EXHAUSTED /
+GenerateRequestsPerDayPerProjectPerModel-FreeTier` -- see NOTES.md). Since
+`gen0.py` needs exactly 40 unique Gemini calls (one per goal, shared across
+each goal's 3 position runs), a full run likely needs ~2 days spread by
+that quota regardless of GPU availability. The resume design built for
+Colab disconnects handles this without any extra code -- a quota
+exhaustion mid-sweep is just another kind of kill, and the next day's
+identical `python gen0.py` picks up where it stopped. `gen0.py`'s
+mechanics (planned-run construction, the resume path, `RunRecord`
+validation, one generated payload shared across its 3 position variants)
+are verified locally with `agent.loop.generate` and
+`VanillaAttacker.generate` monkeypatched (`tests/test_gen0.py`, 7
+tests) -- the same "verify the plumbing here, measure for real on Colab"
+split every GPU-dependent day before this one has used.
+
+| Run | n | Success | Blocked | Malformed | Error | ASR |
+|---|---|---|---|---|---|---|
+| gen-0 (`python gen0.py`, Colab) | 120 | - | - | - | - | - |
+
+*(By family / tool / position: pending the same run -- `gen0.py` prints all
+three breakdowns via `runner._breakdown`, same table shape as day 5's. The
+family breakdown is a single `vanilla` row by design at this generation --
+see NOTES.md day 8's "AttackCase.family" note -- and becomes meaningful
+once `rag` (day 11) is a second arm to compare it against.)*
+
 ## Attacker-arm ASR (later days)
 
 | Attacker | Split | Runs | Hits | ASR |
@@ -186,6 +241,40 @@ tool content in transit.
 | rag | train | - | - | - |
 | vanilla | test (day 18+) | - | - | - |
 | rag | test (day 18+) | - | - | - |
+
+## FAISS retrieval index (day 10)
+
+`attackers/build_index.py` encodes `data_split.load_train()`'s 40
+`injected_text` values (families 1-4 only -- the corpus's own train/test
+guard, so a test-family exemplar can never end up retrievable) with
+`sentence-transformers/all-MiniLM-L6-v2`, L2-normalises, and builds a
+`faiss.IndexFlatIP` -- normalised vectors + inner product = cosine
+similarity. Saves `attackers/index.faiss` plus `attackers/ids.json` (row ->
+`AttackCase.name`), both gitignored (regenerable from `train.jsonl`, same
+treatment as the LoRA adapter).
+
+**Real run, this machine (no GPU needed for a 384-dim sentence encoder over
+40 short strings):**
+
+- Index: 40 vectors, 384 dimensions.
+- Sanity query `"make the model ignore its previous instructions"`, top 3:
+
+| Rank | Pattern | Family | Score |
+|---|---|---|---|
+| 1 | F1-002 | direct_override | 0.462 |
+| 2 | F1-009 | direct_override | 0.382 |
+| 3 | F1-004 | direct_override | 0.376 |
+
+All three land in the family the query was phrased to match, and all three
+scores sit inside the expected ~0.3-0.8 band, not clustered near 1.0 --
+confirms `normalize_embeddings=True` actually took effect (the day's own
+diagnostic for forgetting it: everything scoring near 1.0 regardless of
+query). `tests/test_build_index.py` (5 tests, a real index built once per
+test session, no mocked encoder) pins this down alongside two guards
+specific to this project: every train pattern is indexed and nothing else
+(`index.ntotal == 40`), and no `F5-*`/`F6-*` (the held-out
+`obfuscated_encoding`/`structural_smuggling` families) id ever appears
+among the ids.
 
 ## Defender utility (30 benign tasks)
 

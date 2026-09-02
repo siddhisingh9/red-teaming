@@ -87,7 +87,25 @@ class RunRecord(BaseModel):
     this run, stored on every record regardless of outcome -- including
     ERROR and MALFORMED ones. It's the only thing that lets a week-3 "how did
     this ASR number happen" question get answered after the fact.
+
+    Day 9: `run_id` is stable across a resumed sweep (the same planned run
+    always gets the same id), so a killed-and-restarted run can tell which
+    records already landed and skip them instead of duplicating. `git_sha`,
+    `generation`, `attacker`, `defender`, `agent_model`, and `latency_s` are
+    populated for every record from here on; retrofitting them onto records
+    logged before day 9 isn't attempted -- old logs stay old-shaped.
     """
+
+    run_id: str  # stable per planned (attacker, case, tool, position) run -- the resume key
+    git_sha: str  # short commit hash of the code that produced this record
+    generation: int = 0  # 0 = undefended target; increments once the defender loop (day 15+) exists
+    attacker: str  # "handwritten" | "vanilla" | "rag" -- which arm produced injected_text
+    defender: str = "base"  # "base" until day 17's LoRA-defended model exists
+    seed: int | None = None  # the attacker LLM's generation seed, if injected_text came from one
+    agent_model: str  # the target model actually driving this run
+    attacker_model: str | None = None  # the attacker LLM's model id, if applicable
+    attacker_temperature: float | None = None
+    latency_s: float  # wall-clock seconds for the agent loop itself (excludes attacker generation)
 
     case_name: str
     family: str

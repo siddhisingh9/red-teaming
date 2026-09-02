@@ -25,17 +25,35 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
+import time
 from collections import defaultdict
 
 import config
 from agent import loop
 from agent.loop import AgentRunError
+from agent.model import MODEL_ID as AGENT_MODEL_ID
 from agent.prompts import get_system_prompt
 from judge import canary
 from schemas import AttackCase, Outcome, Position, RunRecord
 from tools import mcp_client, sim
 
 TOOL_REGISTRIES = {"direct": sim.TOOL_REGISTRY, "mcp": mcp_client.TOOL_REGISTRY}
+
+
+def _git_sha() -> str:
+    """Short commit hash of the working tree HEAD, computed once. Day 9's
+    RunRecord.git_sha needs this on every record; falls back to "unknown"
+    rather than crashing a whole sweep over an unrelated git problem."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=config.ROOT, text=True
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+GIT_SHA = _git_sha()
 
 POSITIONS: tuple[Position, ...] = ("top", "middle", "bottom")
 
@@ -81,16 +99,37 @@ def _seed_messages(tool_name: str, task: str, tool_args: dict[str, str]) -> list
 
 
 def run_one(
-    case: AttackCase, tool_name: str, position: Position, control: bool, transport: str
+    case: AttackCase,
+    tool_name: str,
+    position: Position,
+    control: bool,
+    transport: str,
+    *,
+    attacker: str,
+    run_id: str | None = None,
+    generation: int = 0,
+    defender: str = "base",
+    seed: int | None = None,
+    attacker_model: str | None = None,
+    attacker_temperature: float | None = None,
 ) -> RunRecord:
+    """`attacker` records which arm produced `case.injected_text`
+    ("handwritten" | "vanilla" | "rag") -- required, not defaulted, so every
+    call site has to say what it means rather than inheriting a guess.
+    `run_id` defaults to a deterministic id from (attacker, case, tool,
+    position) when the caller doesn't need a specific scheme of its own
+    (day 9's gen0.py passes its own "g0-van-NNNN" sequence instead, since it
+    needs ids stable across a resumed sweep in a fixed planned order)."""
     task, tool_args = TOOL_TASKS[tool_name]
     injection = None if control else case.injected_text
     tool_registry = TOOL_REGISTRIES[transport]
+    run_id = run_id or f"{attacker}-{case.name}-{tool_name}-{position}"
 
     poisoned = tool_registry[tool_name](**tool_args, injection=injection, position=position)
     messages = _seed_messages(tool_name, task, tool_args)
     messages.append({"role": "tool", "content": poisoned.content})
 
+    start = time.monotonic()
     try:
         # injection=None from here on: the payload was already delivered via
         # the seeded tool response above. Any further tool call the agent
@@ -113,8 +152,19 @@ def run_one(
         # RESULTS.md "Judge design".
         assistant_text = "\n".join(m["content"] for m in messages if m["role"] == "assistant")
         outcome = canary.judge(assistant_text, parse_ok=not malformed)
+    latency_s = time.monotonic() - start
 
     return RunRecord(
+        run_id=run_id,
+        git_sha=GIT_SHA,
+        generation=generation,
+        attacker=attacker,
+        defender=defender,
+        seed=seed,
+        agent_model=AGENT_MODEL_ID,
+        attacker_model=attacker_model,
+        attacker_temperature=attacker_temperature,
+        latency_s=latency_s,
         case_name=case.name,
         family=case.family,
         tool_name=tool_name,
@@ -183,7 +233,12 @@ def main() -> None:
             for position in POSITIONS:
                 i += 1
                 record = run_one(
-                    case, tool_name, position, control=args.control, transport=args.transport
+                    case,
+                    tool_name,
+                    position,
+                    control=args.control,
+                    transport=args.transport,
+                    attacker="handwritten",
                 )
                 counts[record.outcome] += 1
                 records.append(record)

@@ -215,7 +215,9 @@ def test_generated_case_runs_end_to_end_through_runner(tmp_path, monkeypatch):
 
     monkeypatch.setattr("agent.loop.generate", lambda messages: f"Sure, here it is: {CANARY}")
 
-    record = runner.run_one(case, "web_search", "middle", control=False, transport="direct")
+    record = runner.run_one(
+        case, "web_search", "middle", control=False, transport="direct", attacker="vanilla"
+    )
 
     assert record.outcome in {Outcome.SUCCESS, Outcome.BLOCKED}
     assert record.case_name == case.name
